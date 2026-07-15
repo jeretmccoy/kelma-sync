@@ -1,7 +1,8 @@
 # KelmaSync
 
-KelmaSync is open sync infrastructure for the Kelma flashcard ecosystem. Its
-purpose is not merely to provide another place to upload an Anki collection. It
+KelmaSync is open sync production infrastructure for the Kelma flashcard ecosystem. Kelma is a fork of Anki that seeks to create a fully open alternative ecosystem where building and innovation are encouraged. As a part of that, KelmaSync is the open alternative to AnkiWeb. AnkiWeb is closed source, with only a watered down version openly available for self hosting.
+
+KelmaSync's purpose is not merely to provide another place to upload an Anki collection. It
 is intended to make the **server, protocol, provider architecture, and client
 integration points** part of the open ecosystem so that users and builders can
 run independent services, inspect sync behavior, and develop new clients
@@ -35,7 +36,7 @@ There is an important distinction:
   servers also exist, but they are no longer the only self-hosting option.
 - Anki explicitly targets its bundled server at individual/family use and notes
   that additions such as a REST API or external databases are unlikely to be
-  accepted because simplicity is a design goal. It is an official way to
+  accepted because inability to scale it is a design goal. It is an official way to
   reproduce the Anki sync model, not an extensible provider platform.
 - The hosted AnkiWeb service—including its production account system, storage,
   deployment, operations, and product policies—is not an open, federated
@@ -50,12 +51,14 @@ HTTP API is documented for non-Anki clients as well as Anki adapters.
 
 The goal is an ecosystem in which:
 
-- users can choose and change their sync provider;
-- clients can expose a configurable sync endpoint instead of hard-coding one
+- users can more easily choose and change their sync provider;
+- official clients can use multiple sync servers for different decks instead of hard-coding one
   hosted service;
 - organizations can self-host without depending on a project-operated account
   database;
 - ecosystem builders can offer compatible sync services and integrations;
+- KelmaSync is designed to be easy to build with;
+- KelmaSync's terms of use are friendly to builders, and not closed like AnkiWeb's;
 - conflict behavior is visible and controllable rather than hidden inside a
   collection merge; and
 - changes to the deployed server can remain available to the community under
