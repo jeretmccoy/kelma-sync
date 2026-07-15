@@ -264,5 +264,7 @@ available over a network must provide the corresponding source as required by
 the AGPL.
 
 The software license does not grant rights to the Kelma names or logos. The
-project permits descriptive and compatibility uses and offers ecosystem
-trademark licenses under [TRADEMARKS.md](TRADEMARKS.md).
+project currently permits descriptive and compatibility uses and is designing
+a broader, transparent ecosystem trademark license modeled on the Linux
+trademark framework rather than Anki's approach. See
+[TRADEMARKS.md](TRADEMARKS.md).
