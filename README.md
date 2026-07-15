@@ -27,14 +27,21 @@ the production AnkiWeb service architecture on equal terms.
 There is an important distinction:
 
 - The [Anki desktop client](https://github.com/ankitects/anki) is open source.
-- Anki also publishes an official self-hosted sync-server implementation. It is
-  possible to run an Anki-compatible server, and KelmaSync does not claim
-  otherwise.
+- Anki has included an official self-hosted server in desktop releases since
+  2.1.57 and a standalone Rust server since 2.1.66. The
+  [official manual](https://docs.ankiweb.net/sync-server.html) documents the
+  bundled server, the official Python package, and the `anki-sync-server` Rust
+  binary; their source lives in the Anki repository. Unofficial third-party
+  servers also exist, but they are no longer the only self-hosting option.
+- Anki explicitly targets its bundled server at individual/family use and notes
+  that additions such as a REST API or external databases are unlikely to be
+  accepted because simplicity is a design goal. It is an official way to
+  reproduce the Anki sync model, not an extensible provider platform.
 - The hosted AnkiWeb service—including its production account system, storage,
   deployment, operations, and product policies—is not an open, federated
-  provider platform. The standalone server reproduces the Anki sync model; it
-  does not make AnkiWeb itself community-operated or turn sync providers into
-  interchangeable ecosystem participants.
+  provider platform. Running the standalone server does not make AnkiWeb itself
+  community-operated or turn sync providers into interchangeable ecosystem
+  participants.
 
 KelmaSync addresses that final layer. The complete service architecture is
 published under a network copyleft license, local accounts work without a Kelma
