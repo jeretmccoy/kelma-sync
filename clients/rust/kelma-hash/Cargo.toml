@@ -1,0 +1,19 @@
+[package]
+name = "kelma-hash"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/jeretmccoy/kelma-sync"
+
+[lib]
+name = "kelma_hash"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kelma-hash"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"

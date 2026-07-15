@@ -1,0 +1,11 @@
+.git
+.github
+.env
+.env.*
+.tmp
+media_store
+**/target
+**/__pycache__
+**/*.py[cod]
+clients/rust/kelma-hash/bin
+.DS_Store

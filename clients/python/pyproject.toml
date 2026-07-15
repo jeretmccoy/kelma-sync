@@ -1,0 +1,9 @@
+[project]
+name = "kelma-sync-v2"
+version = "0.1.0"
+description = "Python client helpers for KelmaSync v2"
+requires-python = ">=3.10"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["kelma_sync_v2*"]

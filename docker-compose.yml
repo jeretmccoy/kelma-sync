@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: kelma_sync
+      POSTGRES_USER: kelma
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kelma}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - kelma-sync-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kelma -d kelma_sync"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  server:
+    build: .
+    environment:
+      PORT: "8080"
+      DATABASE_URL: postgres://kelma:${POSTGRES_PASSWORD:-kelma}@postgres:5432/kelma_sync?sslmode=disable
+      KELMA_AUTH_MODE: ${KELMA_AUTH_MODE:-local}
+      MEDIA_DIR: /data/media
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_ACCESS_KEY: ${R2_ACCESS_KEY:-}
+      R2_SECRET_KEY: ${R2_SECRET_KEY:-}
+      R2_BUCKET: ${R2_BUCKET:-}
+      KELMA_INTERNAL_SECRET: ${KELMA_INTERNAL_SECRET:-}
+    ports:
+      - "${KELMA_BIND_ADDRESS:-127.0.0.1}:${KELMA_PORT:-8080}:8080"
+    volumes:
+      - kelma-sync-media:/data/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  kelma-sync-postgres:
+  kelma-sync-media:
