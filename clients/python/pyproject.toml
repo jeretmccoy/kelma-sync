@@ -1,6 +1,6 @@
 [project]
 name = "kelma-sync-v2"
-version = "0.2.0"
+version = "0.2.1"
 description = "Python client helpers for KelmaSync v2"
 requires-python = ">=3.10"
 

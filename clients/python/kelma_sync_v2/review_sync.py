@@ -125,6 +125,8 @@ def _apply_review(
     record: dict[str, Any],
     card_ids: dict[tuple[str, int], int],
     occupied_card_ids: set[int],
+    *,
+    incoming_usn: int = 0,
 ) -> bool:
     review_id = int(record.get("review_id", 0) or 0)
     if review_id <= 0:
@@ -147,10 +149,11 @@ def _apply_review(
         """
         INSERT OR IGNORE INTO revlog
           (id,cid,usn,ease,ivl,lastIvl,factor,time,type)
-        VALUES (?,?,0,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?)
         """,
         review_id,
         cid,
+        incoming_usn,
         int(record.get("ease", 0) or 0),
         int(record.get("interval", 0) or 0),
         int(record.get("last_interval", 0) or 0),
@@ -316,11 +319,25 @@ def sync_reviews_once(
     if pull_ids and progress:
         progress(f"Reviews: pulling {len(pull_ids)} missing history row(s)…")
     card_ids, occupied_card_ids = _review_card_map(col)
+    incoming_usn = 0 if clear_pending_usn else -1
     for chunk in _chunks(pull_ids):
         response = client.batch_pull(reviews=chunk)
         for record in response.get("reviews", []):
-            if _apply_review(col, record, card_ids, occupied_card_ids):
+            if _apply_review(
+                col,
+                record,
+                card_ids,
+                occupied_card_ids,
+                incoming_usn=incoming_usn,
+            ):
                 result.pulled += 1
+        if progress:
+            progress(f"Reviews: downloaded {result.pulled}/{len(pull_ids)} history row(s)")
+    # Make downloaded history durable before a potentially large first upload.
+    # This also lets the three-way Anki plugin immediately publish pulled rows
+    # to AnkiWeb (incoming_usn=-1) even if the Kelma backfill later fails.
+    if result.pulled:
+        col.save()
 
     push_ids = sorted(set(local) - set(server))
     if push_ids and progress:
@@ -344,6 +361,8 @@ def sync_reviews_once(
                 f"server accepted {accepted}/{len(chunk)} review-history rows"
             )
         result.pushed += accepted
+        if progress:
+            progress(f"Reviews: uploaded {result.pushed}/{len(push_ids)} history row(s)")
         if clear_pending_usn:
             accepted_ids.extend(chunk)
     if accepted_ids:
@@ -382,6 +401,8 @@ def sync_reviews_once(
     for record in latest_by_deck.values():
         if _apply_study_day(col, record):
             result.study_days_applied += 1
+    if result.study_days_applied:
+        col.save()
 
     if progress:
         progress(
