@@ -109,6 +109,31 @@ func deckChecksum(cfg map[string]any) string {
 	return checksum(normalizeDeckConfig(cfg))
 }
 
+// reviewChecksum identifies immutable review content without including the
+// collection-local source card id or current deck metadata. A review relayed by
+// another client therefore remains byte-identical after its card id is mapped.
+func reviewChecksum(
+	noteGUID string,
+	cardOrd int,
+	ease int,
+	interval int,
+	lastInterval int,
+	factor int,
+	takenMillis int,
+	reviewKind int,
+) string {
+	return checksum(
+		noteGUID,
+		cardOrd,
+		ease,
+		interval,
+		lastInterval,
+		factor,
+		takenMillis,
+		reviewKind,
+	)
+}
+
 // notetypeChecksum computes a normalized checksum for a notetype.
 func notetypeChecksum(name string, def map[string]any) string {
 	return checksum(name, normalizeNotetypeDefinition(def))

@@ -52,6 +52,8 @@ Response 200:
 {
   "notes":     [{ "guid":        string, "checksum": string, "modified_at": string, "client_modified_at": string }],
   "cards":     [{ "card_id":     number, "checksum": string, "modified_at": string, "client_modified_at": string }],
+  "reviews":   [{ "review_id":   number, "checksum": string, "deck_name": string, "modified_at": string }],
+  "study_days":[{ "day": number, "deck_name": string, "new_studied": number, "review_studied": number, "learning_studied": number, "milliseconds_studied": number, "modified_at": string }],
   "notetypes": [{ "notetype_id": number, "checksum": string, "modified_at": string, "client_modified_at": string }],
   "decks":     [{ "name":        string, "checksum": string, "modified_at": string, "client_modified_at": string }],
   "media":     [{ "filename":    string, "modified_at": string }],
@@ -241,6 +243,44 @@ Response 204
 
 ---
 
+## Review history
+
+Review history uses Anki's append-only `revlog` semantics. Rows are transferred
+through the batch endpoints and identified by their millisecond `review_id`.
+They are never deleted by note/card tombstones (matching native Anki sync).
+
+A full review record is:
+```
+{
+  "review_id": number,
+  "source_card_id": number,
+  "note_guid": string,
+  "card_ord": number,
+  "deck_name": string,
+  "ease": number,
+  "interval": number,
+  "last_interval": number,
+  "factor": number,
+  "taken_millis": number,
+  "review_kind": number,
+  "checksum": string,
+  "modified_at": string
+}
+```
+
+`source_card_id` is diagnostic/fallback metadata. Card ids are local to each
+collection, so clients normally map each row through `(note_guid, card_ord)`
+before inserting it. Re-sending identical immutable content is idempotent. If
+the same `review_id` carries different immutable content, batch push returns a
+review conflict rather than silently losing history.
+
+Anki's daily limits are stored outside `revlog` in collection-relative deck
+counters. `study_days` carries their portable epoch-day snapshots. Same-day
+server counters merge monotonically so an older device cannot reopen a quota
+already consumed on another device.
+
+---
+
 ## Notetypes
 
 ### Get one
@@ -378,22 +418,26 @@ Body:
 {
   "notes":     [{ "guid": string, ...note body }],
   "cards":     [{ "card_id": number, ...card body }],
+  "reviews":   [{ "review_id": number, ...review-history fields }],
+  "study_days":[{ "day": number, "deck_name": string, ...daily counters }],
   "notetypes": [{ "notetype_id": number, ...notetype body }],
   "decks":     [{ "name": string, ...deck body }]
 }
 Response 200:
 {
-  "accepted": { "notes": number, "cards": number, "notetypes": number, "decks": number },
+  "accepted": { "notes": number, "cards": number, "reviews": number, "study_days": number, "notetypes": number, "decks": number },
   "conflicts": {
     "notes":     [{ "guid": string, "server": {...}, "client": {...} }],
+    "reviews":   [{ "review_id": number, "server": {...}, "client": {...} }],
     "notetypes": [{ "notetype_id": number, "server": {...}, "client": {...} }],
     "decks":     [{ "name": string, "server": {...}, "client": {...} }]
   }
 }
 ```
 
-Cards never appear in conflicts (timestamp wins silently). Notes, notetypes,
-and decks that conflict are returned for user resolution; the rest are accepted.
+Cards never appear in conflicts (timestamp wins silently). Review rows conflict
+only on an impossible/ambiguous reused id; notes, notetypes, and decks retain
+their normal user-resolution behavior. The remaining rows are accepted.
 `Force-Override: true` on a batch push accepts all items unconditionally.
 
 ### Batch pull
@@ -403,6 +447,7 @@ Body:
 {
   "notes":     [string],    -- guids
   "cards":     [number],    -- card_ids
+  "reviews":   [number],    -- review_ids
   "notetypes": [number],    -- notetype_ids
   "decks":     [string]     -- names
 }
@@ -410,6 +455,7 @@ Response 200:
 {
   "notes":     [...],
   "cards":     [...],
+  "reviews":   [...],
   "notetypes": [...],
   "decks":     [...]
 }

@@ -79,6 +79,45 @@ type Deck struct {
 	LastClientLabel  string         `json:"last_client_label"`
 }
 
+// Review is an immutable Anki revlog row. Card ids are collection-local, so
+// NoteGUID + CardOrd carry the portable card identity used when another client
+// inserts the row into its own collection.
+type Review struct {
+	ID              string    `json:"id"`
+	UserID          string    `json:"user_id"`
+	ReviewID        int64     `json:"review_id"`
+	SourceCardID    int64     `json:"source_card_id"`
+	NoteGUID        string    `json:"note_guid"`
+	CardOrd         int       `json:"card_ord"`
+	DeckName        string    `json:"deck_name"`
+	Ease            int       `json:"ease"`
+	Interval        int       `json:"interval"`
+	LastInterval    int       `json:"last_interval"`
+	Factor          int       `json:"factor"`
+	TakenMillis     int       `json:"taken_millis"`
+	ReviewKind      int       `json:"review_kind"`
+	Checksum        string    `json:"checksum"`
+	ModifiedAt      time.Time `json:"modified_at"`
+	LastClientID    string    `json:"last_client_id"`
+	LastClientLabel string    `json:"last_client_label"`
+}
+
+// StudyDay is a portable version of Anki's collection-relative deck counters.
+// Day is an epoch-day (collection crt day + Anki scheduler day).
+type StudyDay struct {
+	ID                  string    `json:"id,omitempty"`
+	UserID              string    `json:"user_id,omitempty"`
+	Day                 int64     `json:"day"`
+	DeckName            string    `json:"deck_name"`
+	NewStudied          int       `json:"new_studied"`
+	ReviewStudied       int       `json:"review_studied"`
+	LearningStudied     int       `json:"learning_studied"`
+	MillisecondsStudied int64     `json:"milliseconds_studied"`
+	ModifiedAt          time.Time `json:"modified_at"`
+	LastClientID        string    `json:"last_client_id,omitempty"`
+	LastClientLabel     string    `json:"last_client_label,omitempty"`
+}
+
 type Media struct {
 	ID         string    `json:"id"`
 	UserID     string    `json:"user_id"`
@@ -102,6 +141,7 @@ type Tombstone struct {
 type ManifestEntry struct {
 	GUID       string    `json:"guid,omitempty"`
 	CardID     int64     `json:"card_id,omitempty"`
+	ReviewID   int64     `json:"review_id,omitempty"`
 	NotetypeID int64     `json:"notetype_id,omitempty"`
 	Name       string    `json:"name,omitempty"`
 	Filename   string    `json:"filename,omitempty"`
@@ -116,14 +156,23 @@ type ManifestEntry struct {
 	ClientModifiedAt time.Time `json:"client_modified_at,omitempty"`
 }
 
+type ReviewManifestEntry struct {
+	ReviewID   int64     `json:"review_id"`
+	Checksum   string    `json:"checksum"`
+	DeckName   string    `json:"deck_name,omitempty"`
+	ModifiedAt time.Time `json:"modified_at"`
+}
+
 type Manifest struct {
-	Notes      []ManifestEntry `json:"notes"`
-	Cards      []ManifestEntry `json:"cards"`
-	Notetypes  []ManifestEntry `json:"notetypes"`
-	Decks      []ManifestEntry `json:"decks"`
-	Media      []ManifestEntry `json:"media"`
-	Tombstones []Tombstone     `json:"tombstones"`
-	ServerTime time.Time       `json:"server_time"`
+	Notes      []ManifestEntry       `json:"notes"`
+	Cards      []ManifestEntry       `json:"cards"`
+	Reviews    []ReviewManifestEntry `json:"reviews"`
+	StudyDays  []StudyDay            `json:"study_days"`
+	Notetypes  []ManifestEntry       `json:"notetypes"`
+	Decks      []ManifestEntry       `json:"decks"`
+	Media      []ManifestEntry       `json:"media"`
+	Tombstones []Tombstone           `json:"tombstones"`
+	ServerTime time.Time             `json:"server_time"`
 }
 
 // ConflictResponse is returned as 409 when a push conflicts.

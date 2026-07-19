@@ -117,6 +117,57 @@ CREATE TABLE cards (
 
 ---
 
+## Review history
+
+```sql
+CREATE TABLE reviews (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    review_id       BIGINT NOT NULL,
+    source_card_id  BIGINT NOT NULL DEFAULT 0,
+    note_guid       TEXT NOT NULL DEFAULT '',
+    card_ord        INT NOT NULL DEFAULT 0,
+    deck_name       TEXT NOT NULL DEFAULT '',
+    ease            SMALLINT NOT NULL,
+    interval        INT NOT NULL,
+    last_interval   INT NOT NULL,
+    factor          INT NOT NULL,
+    taken_millis    INT NOT NULL,
+    review_kind     SMALLINT NOT NULL,
+    checksum        TEXT NOT NULL,
+    modified_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_client_id  UUID REFERENCES clients(id),
+    UNIQUE (user_id, review_id)
+);
+```
+
+Review rows are append-only, like native Anki sync. `source_card_id` is retained
+as a fallback, but clients map history through `(note_guid, card_ord)` because
+card ids differ between collections.
+
+## Daily study counters
+
+```sql
+CREATE TABLE study_days (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id               TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    day                   BIGINT NOT NULL,
+    deck_name             TEXT NOT NULL,
+    new_studied           INT NOT NULL DEFAULT 0,
+    review_studied        INT NOT NULL DEFAULT 0,
+    learning_studied      INT NOT NULL DEFAULT 0,
+    milliseconds_studied  BIGINT NOT NULL DEFAULT 0,
+    modified_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_client_id        UUID REFERENCES clients(id),
+    UNIQUE (user_id, day, deck_name)
+);
+```
+
+`day` is a portable epoch-day. Clients translate between it and Anki's
+collection-relative deck day using the collection creation day (`crt`).
+
+---
+
 ## Media
 
 ```sql
@@ -161,6 +212,8 @@ CREATE TABLE tombstones (
 -- manifest queries: "give me everything changed since <timestamp>"
 CREATE INDEX idx_notes_user_modified      ON notes      (user_id, modified_at);
 CREATE INDEX idx_cards_user_modified      ON cards      (user_id, modified_at);
+CREATE INDEX idx_reviews_user_modified    ON reviews    (user_id, modified_at);
+CREATE INDEX idx_study_days_user_modified ON study_days (user_id, modified_at);
 CREATE INDEX idx_notetypes_user_modified  ON notetypes  (user_id, modified_at);
 CREATE INDEX idx_decks_user_modified      ON decks      (user_id, modified_at);
 CREATE INDEX idx_tombstones_user_modified ON tombstones (user_id, deleted_at);
@@ -192,6 +245,12 @@ CREATE INDEX idx_media_filename   ON media  (user_id, filename);
 - **`deck_name` on cards, not a foreign key** — decks are identified by name.
   Storing the name directly on each card avoids a join and keeps card records
   self-contained for sync.
+- **Append-only reviews** — Anki does not synchronize revlog deletion/undo.
+  Review ids are immutable millisecond ids; an id reused with different content
+  is surfaced as a conflict instead of silently dropping either history row.
+- **Portable daily counters** — revlog rows power statistics, while Anki's daily
+  limits use separate deck counters. Epoch-day snapshots keep those limits in
+  sync even when collections have different creation timestamps.
 - **Media `ref_count`** — incremented when a note is pushed whose fields
   reference the filename, decremented on note update/delete. When `ref_count`
   reaches zero the storage object can be deleted. Not enforced as a DB

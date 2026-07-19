@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 
 from typing import Any
 
 from anki.collection import Collection
 
 from .client import V2Client
+from .conflict_policy import newest_side
 from . import anki_apply, anki_local
 
 _BATCH_SIZE = 3000
@@ -31,15 +31,6 @@ def _logical_key(entry: dict) -> str:
     return entry.get("logical_key") or f"{entry.get('note_guid', '')}:{int(entry.get('ord', 0) or 0)}"
 
 
-def _parse_ts(value) -> float:
-    if not value:
-        return 0.0
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
-    except Exception:
-        return 0.0
-
-
 def sync_cards_once(
     col: Collection,
     client: V2Client,
@@ -47,6 +38,8 @@ def sync_cards_once(
     progress=None,
     deck_names: list[str] | None = None,
     prefer_server: bool = False,
+    newest_wins: bool = False,
+    server_authoritative_keys: set[str] | None = None,
 ) -> CardSyncResult:
     if progress:
         progress("Cards: building local card manifest…")
@@ -54,6 +47,8 @@ def sync_cards_once(
     if server_manifest is None:
         server_manifest = client.manifest()
     server = {_logical_key(x): x for x in server_manifest.get("cards", [])}
+    server_authoritative_keys = server_authoritative_keys or set()
+    utc_now = server_manifest.get("server_time")
     result = CardSyncResult()
     keys = sorted(set(local) | set(server))
     total = len(keys)
@@ -76,17 +71,36 @@ def sync_cards_once(
             else:
                 result.skipped += 1
             continue
+        if key in server_authoritative_keys:
+            # This card did not exist locally before upstream notes/notetypes
+            # were pulled. Anki just generated a pristine card with the current
+            # wall-clock mod time; that is not a local edit and must never
+            # overwrite the upstream card's deck or scheduling.
+            if s:
+                server_pull_ids.append(int(s["card_id"]))
+            else:
+                result.skipped += 1
+            continue
         if l and s:
             if l.get("checksum") != s.get("checksum"):
-                # Structural change (deck move / ord change) — a real conflict.
-                result.conflicts.append({"card_id": int(l["card_id"]), "server": s, "client": l})
+                # KelmaSync-only clients have two canonical sources, so a
+                # structural move with a clear timestamp direction can use the same newest-wins
+                # rule as scheduling. Ties/unknowns remain explicit conflicts.
+                winner = (
+                    newest_side(l, s, utc_now=utc_now) if newest_wins else None
+                )
+                if winner == "server":
+                    server_pull_ids.append(int(s["card_id"]))
+                elif winner == "local":
+                    local_only.append(int(l["card_id"]))
+                else:
+                    result.conflicts.append({"card_id": int(l["card_id"]), "server": s, "client": l})
                 continue
-            # Same structure: scheduling is newest-wins by card mod time.
-            local_ts = _parse_ts(l.get("modified_at"))
-            server_ts = _parse_ts(s.get("client_modified_at"))
-            if local_ts > server_ts:
+            # Same structure: scheduling is newest-wins by UTC source time.
+            winner = newest_side(l, s, utc_now=utc_now)
+            if winner == "local":
                 local_only.append(int(l["card_id"]))  # push local scheduling
-            elif server_ts > local_ts:
+            elif winner == "server":
                 server_pull_ids.append(int(s["card_id"]))
             else:
                 result.skipped += 1

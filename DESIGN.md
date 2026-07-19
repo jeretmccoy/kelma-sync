@@ -29,6 +29,12 @@ The server also stores:
   pull inherit the upstream card instead of treating generation time as an edit.
   Not surfaced to the user as a conflict; silent newest-wins is acceptable because
   scheduling state is continuous and any recent version is correct enough.
+- **Review history** — Anki `revlog` rows are append-only and keyed by their
+  millisecond review id. `(note_guid, card_ord)` remaps collection-local card
+  ids on download, preserving complete statistics and FSRS training history.
+- **Portable daily counters** — per-deck epoch-day snapshots carry Anki's
+  `new_studied`/`review_studied` quota state, which is not derivable from card
+  scheduling and otherwise causes one device to offer a second daily batch.
 - **Media files** — stored as blobs keyed by filename. A note's fields may
   reference media filenames; the server ensures referenced files are present.
   Deletion is reference-counted: a file is removed only when no note references
@@ -148,8 +154,10 @@ iPhone 15" rather than a raw timestamp.
 
 ## Pruning / history
 
-The server keeps only the **current state** of each note — no revision history
-in the hot path. This keeps storage flat and queries fast.
+The server keeps only the **current state** of each note — no note revision
+history in the hot path. Anki review history is the intentional exception:
+`revlog` is itself user data used by statistics and FSRS, and is retained
+append-only just as native Anki sync retains it.
 
 Optionally, an async audit log can record each accepted write as an append-only
 event `{ guid, fields, tags, timestamp, client_id }`. This log can be pruned on

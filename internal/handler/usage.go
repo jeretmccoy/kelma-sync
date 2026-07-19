@@ -20,6 +20,12 @@ func (h *Handler) GetUsage(w http.ResponseWriter, r *http.Request) {
 		     + COALESCE((SELECT SUM(octet_length(scheduling::text)) FROM cards WHERE user_id = $1), 0)
 		     + COALESCE((SELECT SUM(octet_length(definition::text)) FROM notetypes WHERE user_id = $1), 0)
 		     + COALESCE((SELECT SUM(octet_length(config::text)) FROM decks WHERE user_id = $1), 0)
+		     + COALESCE((SELECT SUM(
+		           8 + 8 + octet_length(note_guid) + 4 + octet_length(deck_name)
+		           + 2 + 4 + 4 + 4 + 4 + 2
+		       ) FROM reviews WHERE user_id = $1), 0)
+		     + COALESCE((SELECT COUNT(*) * (8 + 4 + 4 + 4 + 8) + SUM(octet_length(deck_name))
+		       FROM study_days WHERE user_id = $1), 0)
 	`, claims.UserID).Scan(&mediaBytes, &contentBytes); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal", "usage query failed")
 		return

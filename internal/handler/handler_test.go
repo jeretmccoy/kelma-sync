@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jeretmccoy/kelma-sync/internal/db"
+	"github.com/jeretmccoy/kelma-sync/internal/model"
 	"github.com/jeretmccoy/kelma-sync/internal/storage"
 )
 
@@ -43,7 +44,7 @@ func testServer(t *testing.T) (*Handler, *http.ServeMux, *pgxpool.Pool) {
 func resetDB(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(), `
-		TRUNCATE tokens, clients, tombstones, media, cards, notes, decks, notetypes, users RESTART IDENTITY CASCADE
+		TRUNCATE tokens, clients, tombstones, media, reviews, study_days, cards, notes, decks, notetypes, users RESTART IDENTITY CASCADE
 	`)
 	if err != nil {
 		t.Fatalf("truncate: %v", err)
@@ -304,6 +305,121 @@ func TestBatchDeleteWritesTombstones(t *testing.T) {
 	}
 	if remaining != 0 || tombstones != 2 {
 		t.Fatalf("remaining=%d tombstones=%d", remaining, tombstones)
+	}
+}
+
+func TestReviewHistoryRoundTripAndStudyDayMerge(t *testing.T) {
+	_, mux, pool := testServer(t)
+	defer pool.Close()
+	mobile := loginDemo(t, mux, "KelmaMobile")
+	desktop := loginDemo(t, mux, "KelmaDesktop")
+
+	review := map[string]any{
+		"review_id": int64(1784420000123), "source_card_id": int64(111),
+		"note_guid": "review-guid", "card_ord": 0, "deck_name": "Deck",
+		"ease": 3, "interval": 30, "last_interval": 10, "factor": 2500,
+		"taken_millis": 4200, "review_kind": 1,
+	}
+	day := map[string]any{
+		"day": int64(20653), "deck_name": "Deck", "new_studied": 20,
+		"review_studied": 62, "learning_studied": 0,
+		"milliseconds_studied": int64(123456),
+	}
+	batch := map[string]any{
+		"notes": []any{}, "cards": []any{}, "reviews": []any{review},
+		"study_days": []any{day}, "notetypes": []any{}, "decks": []any{},
+	}
+	rr := reqJSON(t, mux, "POST", "/v2/batch/push", batch, mobile)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("push review: got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Relaying the same immutable review from a collection with a different
+	// local card id is idempotent, not a duplicate or conflict.
+	relay := map[string]any{}
+	for key, value := range review {
+		relay[key] = value
+	}
+	relay["source_card_id"] = int64(999)
+	relay["deck_name"] = "Deck::Moved"
+	lowerDay := map[string]any{}
+	for key, value := range day {
+		lowerDay[key] = value
+	}
+	lowerDay["new_studied"] = 5
+	lowerDay["review_studied"] = 10
+	batch["reviews"] = []any{relay}
+	batch["study_days"] = []any{lowerDay}
+	rr = reqJSON(t, mux, "POST", "/v2/batch/push", batch, desktop)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("relay review: got %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	var reviewCount int
+	if err := pool.QueryRow(context.Background(), `SELECT count(*) FROM reviews`).Scan(&reviewCount); err != nil {
+		t.Fatal(err)
+	}
+	if reviewCount != 1 {
+		t.Fatalf("idempotent relay left %d reviews", reviewCount)
+	}
+
+	rr = reqJSON(t, mux, "GET", "/v2/sync/manifest", nil, desktop)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("review manifest: got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var manifest struct {
+		Reviews []struct {
+			ReviewID int64  `json:"review_id"`
+			Checksum string `json:"checksum"`
+		} `json:"reviews"`
+		StudyDays []model.StudyDay `json:"study_days"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Reviews) != 1 || manifest.Reviews[0].ReviewID != 1784420000123 || manifest.Reviews[0].Checksum == "" {
+		t.Fatalf("unexpected review manifest: %+v", manifest.Reviews)
+	}
+	if len(manifest.StudyDays) != 1 || manifest.StudyDays[0].NewStudied != 20 || manifest.StudyDays[0].ReviewStudied != 62 {
+		t.Fatalf("study day was not merged monotonically: %+v", manifest.StudyDays)
+	}
+
+	rr = reqJSON(t, mux, "POST", "/v2/batch/pull", map[string]any{
+		"notes": []string{}, "cards": []int64{},
+		"reviews": []int64{1784420000123}, "notetypes": []int64{},
+		"decks": []string{},
+	}, desktop)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("pull review: got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var pulled struct {
+		Reviews []model.Review `json:"reviews"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &pulled); err != nil {
+		t.Fatal(err)
+	}
+	if len(pulled.Reviews) != 1 || pulled.Reviews[0].NoteGUID != "review-guid" || pulled.Reviews[0].TakenMillis != 4200 {
+		t.Fatalf("unexpected pulled review: %+v", pulled.Reviews)
+	}
+
+	// Reusing an Anki review id for different immutable content is explicit.
+	conflicting := map[string]any{}
+	for key, value := range review {
+		conflicting[key] = value
+	}
+	conflicting["ease"] = 1
+	batch["reviews"] = []any{conflicting}
+	batch["study_days"] = []any{}
+	rr = reqJSON(t, mux, "POST", "/v2/batch/push", batch, desktop)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("review conflict response: got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var result batchPushResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Conflicts["reviews"]) != 1 || result.Accepted["reviews"] != 0 {
+		t.Fatalf("expected one review conflict, got %+v", result)
 	}
 }
 

@@ -38,6 +38,14 @@ func (h *Handler) GetManifest(w http.ResponseWriter, r *http.Request) {
 		writeInternalError(w, err)
 		return
 	}
+	if m.Reviews, err = manifestReviews(ctx, h.DB, claims.UserID, since); err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	if m.StudyDays, err = manifestStudyDays(ctx, h.DB, claims.UserID, since); err != nil {
+		writeInternalError(w, err)
+		return
+	}
 	if m.Notetypes, err = manifestNotetypes(ctx, h.DB, claims.UserID, since); err != nil {
 		writeInternalError(w, err)
 		return
@@ -99,6 +107,59 @@ func manifestCards(ctx context.Context, db *pgxpool.Pool, userID string, since t
 		e.Checksum = checksum(e.NoteGUID, deckName, e.Ord)
 		utcManifestEntry(&e)
 		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func manifestReviews(ctx context.Context, db *pgxpool.Pool, userID string, since time.Time) ([]model.ReviewManifestEntry, error) {
+	rows, err := db.Query(ctx,
+		`SELECT review_id, checksum, deck_name, modified_at FROM reviews
+		 WHERE user_id = $1 AND modified_at > $2 ORDER BY modified_at`,
+		userID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.ReviewManifestEntry{}
+	for rows.Next() {
+		var entry model.ReviewManifestEntry
+		if err := rows.Scan(
+			&entry.ReviewID, &entry.Checksum, &entry.DeckName, &entry.ModifiedAt,
+		); err != nil {
+			return nil, err
+		}
+		entry.ModifiedAt = entry.ModifiedAt.UTC()
+		out = append(out, entry)
+	}
+	return out, rows.Err()
+}
+
+func manifestStudyDays(ctx context.Context, db *pgxpool.Pool, userID string, since time.Time) ([]model.StudyDay, error) {
+	rows, err := db.Query(ctx,
+		`SELECT s.id, s.user_id, s.day, s.deck_name, s.new_studied,
+		        s.review_studied, s.learning_studied, s.milliseconds_studied,
+		        s.modified_at, COALESCE(s.last_client_id::text, ''),
+		        COALESCE(c.label, '')
+		 FROM study_days s LEFT JOIN clients c ON c.id=s.last_client_id
+		 WHERE s.user_id=$1 AND s.modified_at > $2 ORDER BY s.day, s.deck_name`,
+		userID, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.StudyDay{}
+	for rows.Next() {
+		var day model.StudyDay
+		if err := rows.Scan(
+			&day.ID, &day.UserID, &day.Day, &day.DeckName, &day.NewStudied,
+			&day.ReviewStudied, &day.LearningStudied,
+			&day.MillisecondsStudied, &day.ModifiedAt, &day.LastClientID,
+			&day.LastClientLabel,
+		); err != nil {
+			return nil, err
+		}
+		day.ModifiedAt = day.ModifiedAt.UTC()
+		out = append(out, day)
 	}
 	return out, rows.Err()
 }

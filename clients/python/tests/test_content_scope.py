@@ -57,6 +57,14 @@ class ContentScopeTest(unittest.TestCase):
                 {"name": "Other"},
                 {"name": "Other::Child"},
             ],
+            "reviews": [
+                {"review_id": 11, "deck_name": "Selected"},
+                {"review_id": 12, "deck_name": "Other"},
+            ],
+            "study_days": [
+                {"day": 1, "deck_name": "Selected", "new_studied": 20},
+                {"day": 1, "deck_name": "Other", "new_studied": 5},
+            ],
             "notetypes": [],
         }
 
@@ -72,6 +80,10 @@ class ContentScopeTest(unittest.TestCase):
         self.assertEqual([deck["name"] for deck in scoped["decks"]], ["Selected"])
         self.assertEqual(scoped["cards"][0]["logical_key"], "g1:0")
         self.assertEqual(scoped["cards"][0]["scheduling"], {"reps": 1})
+        self.assertEqual([row["review_id"] for row in scoped["reviews"]], [11])
+        self.assertEqual(
+            [row["deck_name"] for row in scoped["study_days"]], ["Selected"]
+        )
 
     def test_legacy_manifest_falls_back_to_assignment_scan(self) -> None:
         manifest = copy.deepcopy(self.manifest)

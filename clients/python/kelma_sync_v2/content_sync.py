@@ -12,6 +12,7 @@ from .deck_sync import DeckSyncConflict, DeckSyncResult, sync_decks_once
 from .media_sync import MediaSyncResult, sync_media_once
 from .notetype_sync import NotetypeSyncConflict, NotetypeSyncResult, sync_notetypes_once
 from .note_sync import NoteSyncConflict, NoteSyncResult, sync_notes_once
+from .review_sync import ReviewSyncConflict, ReviewSyncResult, sync_reviews_once
 from .tombstone_sync import TombstoneSyncResult, apply_tombstones
 from . import anki_local, sync_state
 
@@ -24,6 +25,7 @@ class ContentSyncResult:
     notetypes: NotetypeSyncResult = None  # type: ignore[assignment]
     notes: NoteSyncResult = None  # type: ignore[assignment]
     cards: CardSyncResult = None  # type: ignore[assignment]
+    reviews: ReviewSyncResult = None  # type: ignore[assignment]
     media: MediaSyncResult = None  # type: ignore[assignment]
     server_time: str = ""
 
@@ -48,6 +50,16 @@ class DeletionSafetyError(RuntimeError):
 def _chunks(xs: list, n: int = 3000):
     for i in range(0, len(xs), n):
         yield xs[i:i + n]
+
+
+def _card_logical_key(item: dict[str, Any]) -> str:
+    key = str(item.get("logical_key") or "")
+    if key:
+        return key
+    guid = str(item.get("note_guid") or "")
+    if not guid:
+        return ""
+    return f"{guid}:{int(item.get('ord', 0) or 0)}"
 
 
 def _server_used_notetype_ids(
@@ -208,6 +220,14 @@ def _scope_server_manifest_to_decks(client: V2Client, manifest: dict[str, Any], 
     scoped["cards"] = [c for c in manifest.get("cards", []) if int(c.get("card_id", 0)) in scoped_card_ids]
     scoped["notes"] = [n for n in manifest.get("notes", []) if str(n.get("guid", "")) in scoped_note_guids]
     scoped["decks"] = [d for d in manifest.get("decks", []) if _in_scope(str(d.get("name", "")))]
+    scoped["reviews"] = [
+        review for review in manifest.get("reviews", [])
+        if _in_scope(str(review.get("deck_name", "")))
+    ]
+    scoped["study_days"] = [
+        day for day in manifest.get("study_days", [])
+        if _in_scope(str(day.get("deck_name", "")))
+    ]
     # Server note manifests don't carry notetype_id, so notetype scoping is
     # handled by the caller (which has local notetype IDs from scoped notes).
     return scoped
@@ -277,6 +297,7 @@ def sync_content_once(
     deck_names: list[str] | None = None,
     apply_note_pulls: bool = True,
     allow_large_deletes: bool = False,
+    newest_wins: bool = False,
     progress=None,
 ) -> ContentSyncResult:
     """Run one content sync pass.
@@ -288,7 +309,7 @@ def sync_content_once(
       4. save new snapshot
     """
     if progress:
-        progress("Phase 1/9: fetching full server manifest for checksum comparison…")
+        progress("Phase 1/10: fetching full server manifest for checksum comparison…")
     # IMPORTANT: checksum planning requires a full server manifest. If we pass
     # `since`, unchanged server rows are omitted and look local-only, causing
     # needless re-sends even when checksums match. Incremental sync can only be
@@ -320,26 +341,44 @@ def sync_content_once(
         progress(
             f"Server manifest: {len(manifest.get('notes', []))} notes, "
             f"{len(manifest.get('cards', []))} cards, {len(manifest.get('notetypes', []))} notetypes, "
-            f"{len(manifest.get('decks', []))} decks, {len(manifest.get('media', []))} media"
+            f"{len(manifest.get('decks', []))} decks, {len(manifest.get('reviews', []))} reviews, "
+            f"{len(manifest.get('media', []))} media"
         )
-        progress("Phase 2/9: applying scoped server tombstones…")
+        progress("Phase 2/10: applying scoped server tombstones…")
     tombstones = apply_tombstones(col, manifest)
     if progress:
         progress(f"Tombstones complete: applied {tombstones.applied}")
-        progress("Phase 3/9: previous scoped snapshot loaded")
+        progress("Phase 3/10: previous scoped snapshot loaded")
 
     # Repair local duplicate generated cards before building manifests. This
     # prevents invalid duplicate cards/blank-GUID duplicate notes from being
     # counted or pushed forever.
     anki_local.repair_duplicate_cards(col, deck_names=deck_names, progress=progress)
     if progress:
-        progress("Phase 4/9: building local key snapshot…")
+        progress("Phase 4/10: building local key snapshot…")
     local_note_manifest = anki_local.note_manifest(col, deck_names=deck_names, progress=progress)
     if progress:
         progress(f"Snapshot: {len(local_note_manifest)} local notes")
     local_card_manifest = anki_local.card_manifest(col, deck_names=deck_names)
     if progress:
         progress(f"Snapshot: {len(local_card_manifest)} local cards")
+    # Remember which logical cards existed before any upstream notes or
+    # notetypes are applied. Anki generates cards for pulled notes with a fresh
+    # local mod timestamp; those generated cards are not local edits and the
+    # corresponding server records must remain authoritative this pass.
+    local_card_keys_before_pulls = {
+        key
+        for item in local_card_manifest
+        if (key := _card_logical_key(item))
+    }
+    server_card_keys = {
+        key
+        for item in manifest.get("cards", [])
+        if (key := _card_logical_key(item))
+    }
+    server_authoritative_card_keys = (
+        server_card_keys - local_card_keys_before_pulls
+    )
     used_notetype_ids = {int(n["notetype_id"]) for n in local_note_manifest}
     server_used_notetype_ids = _server_used_notetype_ids(
         client, manifest, progress=progress
@@ -385,7 +424,7 @@ def sync_content_once(
             "without treating unused stock structure as local edits"
         )
     if progress:
-        progress("Phase 5/9: detecting local deletes…")
+        progress("Phase 5/10: detecting local deletes…")
     local_deletes = (
         sync_state.compute_local_deletes(snapshot, local_keys) if scope_matches else {}
     )
@@ -425,7 +464,7 @@ def sync_content_once(
 
     try:
         if progress:
-            progress("Phase 6/9: syncing decks…")
+            progress("Phase 6/10: syncing decks…")
         result.decks = sync_decks_once(
             col,
             client,
@@ -433,12 +472,13 @@ def sync_content_once(
             progress=progress,
             deck_names=deck_names,
             prefer_server=fresh_restore,
+            newest_wins=newest_wins,
         )
     except DeckSyncConflict as e:
         raise ContentSyncConflict("deck", e.conflicts) from e
     try:
         if progress:
-            progress("Phase 7/9: syncing notetypes…")
+            progress("Phase 7/10: syncing notetypes…")
         result.notetypes = sync_notetypes_once(
             col,
             client,
@@ -447,12 +487,13 @@ def sync_content_once(
             progress=progress,
             notetype_ids=compared_notetype_ids,
             prefer_server=fresh_restore,
+            newest_wins=newest_wins,
         )
     except NotetypeSyncConflict as e:
         raise ContentSyncConflict("notetype", e.conflicts) from e
     try:
         if progress:
-            progress("Phase 8/9: syncing notes…")
+            progress("Phase 8/10: syncing notes…")
         result.notes = sync_notes_once(
             col,
             client,
@@ -461,12 +502,13 @@ def sync_content_once(
             deck_name=deck_name,
             deck_names=deck_names,
             server_manifest=manifest,
+            newest_wins=newest_wins,
             progress=progress,
         )
     except NoteSyncConflict as e:
         raise ContentSyncConflict("note", e.conflicts) from e
     if progress:
-        progress("Phase 9/9: syncing cards…")
+        progress("Phase 9/10: syncing cards…")
     try:
         result.cards = sync_cards_once(
             col,
@@ -475,9 +517,24 @@ def sync_content_once(
             progress=progress,
             deck_names=deck_names,
             prefer_server=fresh_restore,
+            newest_wins=newest_wins,
+            server_authoritative_keys=server_authoritative_card_keys,
         )
     except CardSyncConflict as e:
         raise ContentSyncConflict("card", e.conflicts) from e
+    try:
+        if progress:
+            progress("Phase 10/10: syncing full review history and daily limits…")
+        result.reviews = sync_reviews_once(
+            col,
+            client,
+            manifest,
+            deck_names=deck_names,
+            clear_pending_usn=newest_wins,
+            progress=progress,
+        )
+    except ReviewSyncConflict as e:
+        raise ContentSyncConflict("review history", e.conflicts) from e
     if progress:
         progress("Final phase: syncing media…")
     result.media = sync_media_once(

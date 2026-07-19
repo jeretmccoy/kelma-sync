@@ -27,14 +27,17 @@ type batchDeck struct {
 }
 
 type batchPushRequest struct {
-	Notes     []batchNote     `json:"notes"`
-	Cards     []batchCard     `json:"cards"`
-	Notetypes []batchNotetype `json:"notetypes"`
-	Decks     []batchDeck     `json:"decks"`
+	Notes     []batchNote          `json:"notes"`
+	Cards     []batchCard          `json:"cards"`
+	Reviews   []putReviewRequest   `json:"reviews"`
+	StudyDays []putStudyDayRequest `json:"study_days"`
+	Notetypes []batchNotetype      `json:"notetypes"`
+	Decks     []batchDeck          `json:"decks"`
 }
 
 type conflictEntry struct {
 	GUID       string `json:"guid,omitempty"`
+	ReviewID   int64  `json:"review_id,omitempty"`
 	NotetypeID int64  `json:"notetype_id,omitempty"`
 	Name       string `json:"name,omitempty"`
 	Server     any    `json:"server"`
@@ -61,8 +64,13 @@ func (h *Handler) BatchPush(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := batchPushResponse{
-		Accepted:  map[string]int{"notes": 0, "cards": 0, "notetypes": 0, "decks": 0},
-		Conflicts: map[string][]conflictEntry{"notes": {}, "notetypes": {}, "decks": {}},
+		Accepted: map[string]int{
+			"notes": 0, "cards": 0, "reviews": 0, "study_days": 0,
+			"notetypes": 0, "decks": 0,
+		},
+		Conflicts: map[string][]conflictEntry{
+			"notes": {}, "reviews": {}, "notetypes": {}, "decks": {},
+		},
 	}
 	now := time.Now().UTC()
 
@@ -130,6 +138,37 @@ func (h *Handler) BatchPush(w http.ResponseWriter, r *http.Request) {
 		resp.Accepted["cards"]++
 	}
 
+	for _, review := range req.Reviews {
+		if review.ReviewID <= 0 {
+			writeError(w, http.StatusBadRequest, "bad_review_history", "review_id must be positive")
+			return
+		}
+	}
+	reviewCollisions, err := h.insertReviews(
+		ctx, claims.UserID, claims.ClientID, req.Reviews, now,
+	)
+	if err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	for _, collision := range reviewCollisions {
+		resp.Conflicts["reviews"] = append(resp.Conflicts["reviews"],
+			conflictEntry{
+				ReviewID: collision.Client.ReviewID,
+				Server:   collision.Server,
+				Client:   collision.Client,
+			})
+	}
+	resp.Accepted["reviews"] = len(req.Reviews) - len(reviewCollisions)
+
+	for _, day := range req.StudyDays {
+		if _, err := h.upsertStudyDay(ctx, claims.UserID, claims.ClientID, day, now); err != nil {
+			writeError(w, http.StatusBadRequest, "bad_study_day", err.Error())
+			return
+		}
+		resp.Accepted["study_days"]++
+	}
+
 	for _, nt := range req.Notetypes {
 		cs := notetypeChecksum(nt.Name, nt.Definition)
 		existing, err := h.loadNotetype(r, claims.UserID, nt.NotetypeID)
@@ -179,6 +218,7 @@ func (h *Handler) BatchPush(w http.ResponseWriter, r *http.Request) {
 type batchPullRequest struct {
 	Notes     []string `json:"notes"`
 	Cards     []int64  `json:"cards"`
+	Reviews   []int64  `json:"reviews"`
 	Notetypes []int64  `json:"notetypes"`
 	Decks     []string `json:"decks"`
 }
@@ -186,6 +226,7 @@ type batchPullRequest struct {
 type batchPullResponse struct {
 	Notes     []model.Note     `json:"notes"`
 	Cards     []model.Card     `json:"cards"`
+	Reviews   []model.Review   `json:"reviews"`
 	Notetypes []model.Notetype `json:"notetypes"`
 	Decks     []model.Deck     `json:"decks"`
 }
@@ -291,7 +332,7 @@ func (h *Handler) BatchPull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := batchPullResponse{
-		Notes: []model.Note{}, Cards: []model.Card{},
+		Notes: []model.Note{}, Cards: []model.Card{}, Reviews: []model.Review{},
 		Notetypes: []model.Notetype{}, Decks: []model.Deck{},
 	}
 	for _, guid := range req.Notes {
@@ -303,6 +344,12 @@ func (h *Handler) BatchPull(w http.ResponseWriter, r *http.Request) {
 		if c, err := h.loadCard(r, claims.UserID, id); err == nil {
 			resp.Cards = append(resp.Cards, c)
 		}
+	}
+	if reviews, err := h.loadReviews(r.Context(), claims.UserID, req.Reviews); err == nil {
+		resp.Reviews = reviews
+	} else {
+		writeInternalError(w, err)
+		return
 	}
 	for _, id := range req.Notetypes {
 		if nt, err := h.loadNotetype(r, claims.UserID, id); err == nil {

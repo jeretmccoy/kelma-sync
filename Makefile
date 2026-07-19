@@ -21,7 +21,7 @@ db-logs:
 # so logins survive a reset.
 db-reset-content:
 	docker compose exec -T postgres psql -U kelma -d kelma_sync -c \
-	  "TRUNCATE notes, cards, notetypes, decks, media, tombstones RESTART IDENTITY;"
+	  "TRUNCATE reviews, study_days, notes, cards, notetypes, decks, media, tombstones RESTART IDENTITY;"
 
 run:
 	go run ./cmd/server

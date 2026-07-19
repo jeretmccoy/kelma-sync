@@ -13,6 +13,14 @@ import (
 // TestChecksumParityWithRust verifies the native Go checksum is byte-identical
 // to the canonical Rust binary. If the Rust binary isn't built, the test is
 // skipped (native fallback is what runs in that case anyway).
+func TestReviewChecksumParity(t *testing.T) {
+	got := reviewChecksum("g1", 0, 3, 10, 1, 2500, 4000, 1)
+	const want = "46a3a58da871440db7ede339f4ccaf508f5283d5060e20a705c1c3b889d7a17a"
+	if got != want {
+		t.Fatalf("review checksum=%s want=%s", got, want)
+	}
+}
+
 func TestChecksumParityWithRust(t *testing.T) {
 	bin := rustHashBinary(t)
 	if bin == "" {

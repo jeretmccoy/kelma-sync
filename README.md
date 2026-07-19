@@ -9,7 +9,8 @@ run independent services, inspect sync behavior, and develop new clients
 without depending on a private hosted backend.
 
 The server uses an item-oriented v2 protocol: clients exchange manifests and
-transfer only changed notes, cards, decks, notetypes, tombstones, and media. It
+transfer only changed notes, cards, complete review history, daily study counters,
+decks, notetypes, tombstones, and media. It
 is written in Go, stores structured data in PostgreSQL, and stores media either
 on the local filesystem or in Cloudflare R2 through its S3-compatible API.
 Reference Python clients and the canonical Rust checksum helper are included.
